@@ -172,3 +172,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+comsol_cluster/slurm.status
+teslog.log

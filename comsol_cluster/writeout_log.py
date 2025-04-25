@@ -1,4 +1,6 @@
 
+#! /home/mayjustice/.venv/bin/python3 
+
 import time
 from typing import Iterator
 import re
@@ -6,6 +8,7 @@ import subprocess
 import pandas as pd
 from pandas import DataFrame
 from pathlib import Path
+import argparse
 
 class MailClient():
 
@@ -18,33 +21,31 @@ class MailClient():
             ["mail", "-s", subject, self.recipient], 
             input=text, text=True, check=True)
 
-
-
 class DefaultRegex():
 
     def filter_iteration(self, line):
-        rgr1 = r"^\s*[0-9.\-]+\s+[0-9.\-]+\s+[0-9.\-]+\s+\s*[0-9.\-]+\s*[0-9.\-]+\s*[0-9.\-]$"
+        #rgr1 = r"^\s*[0-9.\-]+\s+[0-9.\-]+\s+[0-9.\-]+\s+\s*[0-9.\-]+\s*[0-9.\-]+\s*[0-9.\-]$"
+        rgr1 = r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s*$"
+
         m = re.match(rgr1, line)
         if m:
             rgr2 = r"\s*([0-9.\-]+)"
             matches = re.findall(rgr2, m.group(0))
             if len(matches) == 6:
                 _df = pd.DataFrame([matches], columns=["Iter", "Inner", "nEval", "Error", "Objective", "MaxInfeas"])
-                _df.apply(pd.to_numeric)
+                # try to convert ever
+                # _df.apply(pd.to_numeric)
+
                 _df['Timestamp'] = pd.Timestamp.now()
                 return _df
         return None
-
-
-
-
 
 class ClusterLogParser():
 
     def __init__(self, file_name, slurm_id):
         self._file_name = Path(file_name).absolute()
        
-        self.slurmid = slurm_id
+        self.slurm_id = slurm_id
 
         self.default_regex = DefaultRegex()
         self._parsed_log = DataFrame()
@@ -111,7 +112,7 @@ class ClusterLogParser():
     def print_header(self):
         _header = f"COMSOL Version: {self._comsol_version}"
         _header += f"\nOpened file: {self._loaded_file}"
-        _header += f"\nSlurm ID: {self.slurmid}"
+        _header += f"\nSlurm ID: {self.slurm_id}"
         _header += f"\nmph-File: {self._loaded_file}"
         _header += f"\nActive Workers: {self._num_nodes}"
         return _header
@@ -132,7 +133,7 @@ class ClusterLogParser():
                     line = filter(line)
                    
                     if line is not None:
-                        line['Runtime'] = self.get_slurm_runtime(self.slurmid)
+                        line['Runtime'] = self.get_slurm_runtime(self.slurm_id)
                         if not printed_header:
                             print(self.print_header())
                             print(column_format.format("Iter", "Inner", "nEval", "Error", "Objective", "MaxInfeas", 'Timestamp', 'Runtime'))
@@ -145,7 +146,7 @@ class ClusterLogParser():
                         if mail_client is not None:
                             mail_client.send_mail(
                                 text=f"{self.print_header()} \n\n {self._parsed_log}",
-                                subject=f"New iteration finished: {self._parsed_log.iloc[-1]['Iter']}")
+                                subject=f"ID {self.slurm_id} - Iteration finished: {self._parsed_log.iloc[-1]['Iter']}")
 
     def _follow_file(self, file, sleep_sec=0.1) -> Iterator[str]:
         """ Yield each line from a file as they are written.
@@ -184,12 +185,20 @@ class ClusterLogParser():
     
 
 
-
-
 if __name__ == '__main__':
-    clp = ClusterLogParser("teslog.log", "14388290")
-    mail = MailClient("mail@mail.com")
-    clp.follow(filters=[clp.default_regex.filter_iteration], mail_client=mail)
-    # clp.follow(filter=None)
+    parser = argparse.ArgumentParser(description="Parse COMSOL cluster logs and optionally notify via email.")
+
+    parser.add_argument('-f', '--file', type=str, required=True, help='Path to the COMSOL log file')
+    parser.add_argument('-m', '--mail', type=str, help='Recipient email address for notifications')
+    parser.add_argument('-i', '--id', type=str, help='SLURM job ID')
+
+    args = parser.parse_args()
+
+    # Instantiate log parser with log file
+    clp = ClusterLogParser(args.file, args.id)
+
+    # Optionally instantiate mail client
+    mail_client = MailClient(args.mail) if args.mail else None
+    clp.follow(filters=[clp.default_regex.filter_iteration], mail_client=mail_client)
 
     
